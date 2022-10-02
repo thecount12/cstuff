@@ -1,0 +1,329 @@
+## write interactive graphics
+
+some graphic stuff in 9fron using libdraw and libthread beginning stuff
+
+* microui: https://git.sr.ht/~ft/microui
+* libnuklear: https://github.com/Plan9-Archive/libnuklear
+* nuklear-demo
+
+## The man Pages to use
+
+The important man pages are as follows. Please read up before continuing, even if you don’t fully understand what they mean.
+
+* graphics(2)
+* draw(2)
+* allocimage(2)
+* addpt(2)
+* thread(2)
+* mouse(2)
+* keyboard(2)
+ 
+Other useful man pages are listed in the See Also section of graphics(2)
+
+## Draw Something Simple
+
+Before we can draw, we need to set up all of the boilerplate. The man pages of 9front list the header files that we need include in order to use the library. (cursor.h isn’t actually necessary, unless you plan on changing the cursor image.)
+
+	#include <u.h>
+	#include <libc.h>
+	#include <draw.h>
+	#include <cursor.h>
+
+If the program takes in arguments, we will need to use arg(2). The macros function like a switch statement. 
+If an invalid argument is passed, it will go to default, where we will print to stderr and exit. argv0 is a special variable set by ARGBEGIN that is the program’s name. If you’re not using arg(2), it is in argv[0].
+
+	void
+	main(int argc, char *argv[])
+	{
+		ulong co; // a color
+		Image *im1, *im2, *bbg; // pointers for image1, image2, background
+		co = 0xFF0000FF;; //RGB Red and Opaque
+		
+		ARGBEGIN {
+		case 'b':
+			co = DBlue; // using enum from allocimage(2)
+		default:
+			fprint(2, "usage: %s [-b]\n", argv0); // file desc 2 is stderr
+			exits("usage"); //return with an exit string, because the program didn't succ   end
+		}ARGEND;
+
+A common pattern in C is to provide initialization routines for libraries that handle a lot of state. These libraries will set errstr(2) and return -1 if they fail, so we need to catch and abort if it happens. 
+Initdraw connects us to the display and initializes the global display variable. We use the default error function by passing nil, another nil pointer to use the default font, and the name of the program as the label.
+
+	if(initdraw(nil, nil, argv0) < 0)
+		sysfatal("%s: %r", argv0);
+
+We now need to connect to the window by using getwindow. This needs to be done every time the window is resized, 
+but we will handle that case when we get to mouse control. As it turns out, initdraw already calls getwindow for us!
+No need to call it yet.
+
+Let’s draw!
+ 
+First, we will need to allocate an image by using allocimage. Images are allocated on the drawing device, display. 
+If you are connected to a cpu server, the drawing device is still local to your machine. We will take advantage of 
+this fact to make sure drawing happens as fast as possible.
+
+We shall allocate a 10x10 size image on the display. The image supports red, green, blue, for a total of 24 bits.
+The repl flag is cleared, so this image will not tile and only draw once. The image fill is set to yellow (an enum in
+allocimage(2)).
+
+	im1 = allocimage(display, Rect(0,0,100,100), RGB24, 0, DYellow);
+
+We do a similar thing, but with a different color that is fully green but half transparent (this is called premultiplied
+alpha). Colors are defined in color(2) and color(6).
+
+
+	im2 = allocimage(display, Rect(0,0,100,100), RGBA32, 0, 0x007F007F);
+ 
+We shall also allocate a 1x1 size image on the display. The image is opaque, only supporting red, green, and blue, 8
+bits per channel. The repl flag is set! Drawing this image will repeat itself over and over again to fill up the whole
+window. We use the color that we defined earlier as the default image fill.
+
+	bg = allocimage(display, Rect(0,0,1,1), RGB24, 1, co);
+
+Because allocating can fail, we must check if the returned images are nil.
+
+	if(im1 == nil || im2 == nil || bg == nil)
+		sysfatal("get more memory, bub");
+
+Now we need to composite the image using the draw function. We will first draw bg, then im1, and lastly im2.
+
+We first pass a pointer of the destination image, the global screen variable. Then, we pass in the area that our source
+image is allowed to draw into, which will be the destination’s size. Then, the source image pointer is given. A mask
+image could be given, but we pass a nil pointer for it instead. ZP is the zero point, {0,0}. See draw(2) for a
+description of how draw handles the point argument.
+
+	draw(screen, screen->r, bg, nil, ZP);
+
+We then composite the next images on top, im1 below im2. We use the src image rectangle for this, but then we need to 
+add the dst minimum point, and an offset.
+          
+	draw(screen, rectaddpt(im1->r, addpt(screen->r.min, Pt(40,40))), im1, nil, ZP);
+	draw(screen, rectaddpt(im2->r, addpt(screen->r.min, Pt(20,20))), im2, nil, ZP);
+ 
+This can also be written as follows. The reason for the negated offset and what the p argument does is for sprites.
+This is explained further in AdvancedLibdrawTips.
+
+These draw commands are not immediately written to the screen. We need to push these Remote Procedure Calls
+(RPCs) to the draw device using flushimage (see draw(2)). We then call sleep so the image stays for a while, and then
+exit.
+
+	flushimage(display, Refnone);
+	sleep(10000);
+		exits(nil);
+    }
+ 
+Compile the program using 6c, link with 6l, and run it. You should see a red screen, a yellow square, and a
+transparent green square on top.
+
+## About Libthread
+
+Libthread is the library that provides easy concurrency and parallel program execution. These threads are scheduled
+cooperatively; when one thread is blocked, it gives up execution, and a different thread is run. Note that this is not
+parallelism, as these threads are within the same proc (process). Procs are preemptively scheduled by the kernel, which
+may interrupt execution at any time (a great source of both bugs and learning!). Libthread also supports creating
+parallel procs with shared memory, though this tutorial will not explore that. Procs contain the promise of faster speeds
+on manycore architectures, but the difficulty of managing them isn’t always worth the effort. Threads simply allow
+coroutines, which are suitable for organizing certain problems.
+Threads and procs can control shared memory using locked variables or channels. Know when to use either: channels
+are used for 2-way communication between threads and procs, locks are generally used for multi-proc global variables
+where parallel execution can mess up memory access.
+
+## Mouse and Keyboard Input
+
+mouse(2) and keyboard(2) both use threads to execute, and communicate with channels. Both open files in /dev, read
+it into convenient C data structures, and send the data through channels.
+Let’s get started with including the header files. Our program will start similarly as before, through with some extra
+declarations. Check the man pages for what the Mousectl and Keyboardctl structs are. main is changed to threadmain,
+as libthread defines its own main function and then calls threadmain.
+
+But now we need to initialize the mouse and keyboard, similarly to initdraw. Using very compact C notation, a
+function, assignment, comparison, and branch are all performed within the same line. See the associated man pages for
+what each argument means.
+
+	if((mctl = initmouse(nil, screen)) == nil)
+		sysfatal("%s: %r", argv0);
+	if((kctl = initkeyboard(nil)) == nil)
+		sysfatal("%s: %r", argv0);
+
+It’s entirely possible to use nbrecv (no-block receive) to check all of the channels before determining what to do with
+any received data. The Alt struct and function is a convenience to do all of this. The function will read each Alt
+structure in an array, put the read data into the pointer, and return with the index of that Alt struct in the array. We
+will define our Alt array at declaration, for convenience. Note the convention of channels ending with a ‘c’.
+	
+	enum{MOUSE, RESIZE, KEYBD, NONE};
+	Alt alts[4] = {
+		{mctl->c, &mouse, CHANRCV},
+		{mctl->resizec, &resize, CHANRCV}
+		{kctl->c, &kbd, CHANRCV},
+		{nil, nil, CHANEND},
+	};
+
+We then use the alt function to read through every Alt and return one of the indices. This is used in a switch
+statement to decide what to do next. This is all done inside of a forever loop to create an event loop.
+
+	for(;;){
+		switch(alt(alts)){
+
+Our first case is MOUSE. Let’s change the bg color to magenta or cyan depending on the mouse click and redraw. Note
+that loadimage loads in little endian byte order (blue first).
+
+	case MOUSE:
+		if(mouse.buttons == 1)
+			loadimage(bg, bg->r, magenta, sizeof(magenta));
+		else if(mouse.buttons == 4)
+			loadimage(bg, bg->r, cyan, sizeof(cyan));
+		draw(screen, screen->r, bg, nil, ZP);
+		draw(screen, screen->r, im1, nil, Pt(-40,-40));
+		draw(screen, screen->r, im2, nil, Pt(-20,-20));
+		flushimage(display, Refnone);
+		break;
+
+If the window gets resized, we lose window control, have to call getwindow, and redraw.
+		case RESIZE:
+			if(getwindow(display, Refnone) < 0)
+				sysfatal("%s: %r", argv0);
+			draw(screen, screen->r, bg, nil, ZP);
+			draw(screen, screen->r, im1, nil, Pt(-40,-40));
+			draw(screen, screen->r, im2, nil, Pt(-20,-20));
+			flushimage(display, Refnone);
+			break;
+
+Next, let’s handle a keyboard input. If the character is the delete key, we will exit the program (as is the 9front
+convention), however using threadexitsall instead of exits. Note that if the program is capturing keyboard input and the
+delete key case is not handled, there will be no way to exit the program (besides deleting the window).
+		case KEYBD:
+			if(kbd == 'a')
+				loadimage(bg, bg->r, purple, sizeof(purple));
+			else if(kbd == 'b')
+				loadimage(bg, bg->r, orange, sizeof(orange));
+			else if(kbd == 'q')
+				threadexitsall(nil);
+			draw(screen, screen->r, bg, nil, ZP);
+			draw(screen, screen->r, im1, nil, Pt(-40,-40));
+			draw(screen, screen->r, im2, nil, Pt(-20,-20));
+			flushimage(display, Refnone);
+			break;
+
+In case there’s any errors in the alt, do nothing.
+                 case NONE:
+                         break;
+                  }
+           }
+    }
+ And that’s it!
+
+ If you’ve noticed, a lot of the redrawing can be factored out into a separate function, following the rule of Don’t
+ Repeat Yourself. If there’s some things I had glossed over (like channels), be sure to read the man pages. Happy
+ hacking!
+Other Options
+ An alternative to using libdraw is to use libnuklear. Find it in ports under /draw-libs/libnuklear.
+ Other Plan 9 libraries include event(2) and control(2). Libevent is a very old input library, and while it is still capable,
+ libthread has largely superseded it. Libcontrol tries to provide a complete toolkit for creating GUIs. However, the Plan 9
+ team left it unfinished. Personally, I (Amavect) have tried using it, but I didn’t find it particularly easy to create my
+ own control elements.
+
+Here is the complete code
+
+#include <u.h>
+#include <libc.h>
+#include <draw.h>
+#include <cursor.h>
+#include <thread.h>
+#include <mouse.h>
+#include <keyboard.h>
+
+void
+threadmain(int argc, char *argv[])
+{
+	ulong co; // a color
+	Image *im1, *im2, *bg; // pointers for image1, image2, background
+	Mousectl *mctl;
+	Keyboardctl *kctl;
+	Mouse mouse;
+	int resize[2];
+	Rune kbd;
+	uchar magenta[3] = {0xFF, 0x00, 0xFF};
+	uchar cyan[3] = {0xFF, 0xFF, 0x00};
+	uchar purple[3] = {0xFF, 0x00, 0xA0};
+	uchar orange[3] = {0x00, 0x7F, 0xFF};
+	
+	co = 0xFF0000FF;; //RGB Red and Opaque
+
+	ARGBEGIN{
+	case 'b':
+		co = DBlue;
+	default:
+		fprint(2, "usage: %s [-b]\n", argv0);
+		exits("usage");
+	}ARGEND;
+
+	if(initdraw(nil, nil, argv0) < 0)
+		sysfatal("%s: %r", argv0);
+	im1 = allocimage(display, Rect(0,0,100,100), RGB24, 0, DYellow);
+	im2 = allocimage(display, Rect(0,0,100,100), RGBA32, 0, 0x007F007F);
+	bg = allocimage(display, Rect(0,0,1,1), RGB24, 1, co);
+	if(im1 == nil || im2 == nil || bg == nil)
+		sysfatal("get more memory, bub");
+	draw(screen, screen->r, bg, nil, ZP);
+	draw(screen, screen->r, im1, nil, Pt(-40,-40));
+	draw(screen, screen->r, im2, nil, Pt(-20,-20));
+	flushimage(display, Refnone);
+	
+	if((mctl = initmouse(nil, screen)) == nil)
+ 		sysfatal("%s: %r", argv0);
+	if((kctl = initkeyboard(nil)) == nil)
+		sysfatal("%s: %r", argv0);
+
+	enum{MOUSE, RESIZE, KEYBD, NONE};
+	Alt alts[4] = {
+		{mctl->c, &mouse, CHANRCV},
+		{mctl->resizec, &resize, CHANRCV},
+		{kctl->c, &kbd, CHANRCV},
+		{nil, nil, CHANEND},
+	};
+
+	for(;;) {
+		switch(alt(alts)) {
+
+		case MOUSE:
+			if(mouse.buttons == 1)
+				loadimage(bg, bg->r, magenta, sizeof(magenta));
+			else if(mouse.buttons == 4)
+				loadimage(bg, bg->r, cyan, sizeof(cyan));
+			draw(screen, screen->r, bg, nil, ZP);
+			draw(screen, screen->r, im1, nil, Pt(-40,-40));
+			draw(screen, screen->r, im2, nil, Pt(-20,-20));
+			flushimage(display, Refnone);
+			break;
+
+		case RESIZE:
+			if(getwindow(display, Refnone) < 0)
+				sysfatal("%s: %r", argv0);
+			draw(screen, screen->r, bg, nil, ZP);
+			draw(screen, screen->r, im1, nil, Pt(-40,-40));
+			draw(screen, screen->r, im2, nil, Pt(-20,-20));
+			flushimage(display, Refnone);
+			break;
+
+		case KEYBD:
+			if(kbd == 'a')
+				loadimage(bg, bg->r, purple, sizeof(purple));
+			else if(kbd == 'b')
+				loadimage(bg, bg->r, orange, sizeof(orange));
+			else if(kbd == 'q')
+				threadexitsall(nil);
+			draw(screen, screen->r, bg, nil, ZP);
+			draw(screen, screen->r, im1, nil, Pt(-40,-40));
+			draw(screen, screen->r, im2, nil, Pt(-20,-20));
+			flushimage(display, Refnone);
+			break;
+
+		case NONE:
+			break;
+		}
+	}
+}
+
+	; 7c -FVw simple.c
+	; 7l -o 7.simple simple.7
