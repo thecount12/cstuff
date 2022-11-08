@@ -1,0 +1,14 @@
+
+
+Here is the collectino of books: 
+#1: dune by asdf
+It is 44 pages and costs $32.00
+
+#2: blah by foo
+It is 55 pages and costs $43.20
+
+#3: bazinga by sheldon
+It is 56 pages and costs $43.30
+
+
+More books to come!

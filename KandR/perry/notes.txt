@@ -1,1 +1,56 @@
 1. left off page 121
+
+getchar() kind of looks for enter key before terminates
+
+blah = getchar();
+getchar(); //discards the new line
+
+getch does not wait for new line
+
+2. strcat(fullLocation, city); // adding city to location
+3. puts("What city do you live in")
+ gets(city); // char city[15]; // page 178
+
+#include <math.h>
+4. low = floor(18.5); // 18.0
+5. high = ceil(18.5); // 19.0
+6. fabs() floating point, sqrt() pow()
+cos(), sin(), tan(), acos(), asin(), atan(), 
+
+pointer stuff
+
+page 235
+
+char input[81]; // holds a string as long as 80 characters
+char *iptr = input; // also could have done char *iptr = &input[0] 
+
+########### heap ##########
+
+page 244 Heap
+
+page 247: int * temps; // will point to the first heap value
+Here you can allocate 10 integers on the heap using malloc():
+temps = (int *) malloc(10 * sizeof(int)); //
+
+malloc() only requires a single value
+
+10 bytes ut 10 integers only sizeof() will know for sure
+
+(int *) this is a typecast, you have seen others like converting a float to an int
+example: aVal = (int)salary;
+
+The '*' inside the typecast means that the typecast is a poiner typecast, malloc() always
+returns a character pointer. 
+
+Not enough memory, Then test
+
+temps = (int *) malloc(10 * sizeof(int));
+if (temps == 0)
+{
+	print("Oops! Not Enough Memory!\n");
+	exits(nil);
+}
+//; rest of the program don't forget to free at the end 
+free(temps[asdf]);
+
+perry page 300
