@@ -4,24 +4,26 @@
 
 // K&R page 78
 // not a great example in the book I would rewrite this
-
+// my new code counts down from 10..1
 
 void
-printd(int n)
+recur(int n)
 {
-	if (n > 0)  // book had this flipped
+	print("num: %d\n", n);
+	if (n == 0)  // book had this flipped
 	{
-		putchar('-');
-		n = -n;
+		exits(nil);
 	}
-	if (n / 10)
-		printd(n / 10);
-	putchar(n % 10 + '0');
+	else
+	{
+		n = n -1;
+		recur(n);
+	}
 }
 
 main()
 {
 	print("start recursion\n");
-	printd(10);
+	recur(10);
 	return 0;
 }
